@@ -1,31 +1,171 @@
----
-title: "Practical Machine Learning Course Project"
-author: "karglro"
-date: "11 März 2018"
-output: html_document
----
 
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+# Predicting the way physical exercises are done
+
+## Background
+
+The provided data (https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv) contains measurements collected by devices during physical exercises. The setup was such that participants were asked to do certain excercise in different incorrect ways. 
+
+- Class A: exactly according to the specification 
+- Class B: throwing the elbows to the front
+- Class C: lifting the dumbbell only halfway 
+- Class D: lowering the dumbbell only halfway 
+- Class E: throwing the hips to the front
+
+The goal of this paper is to provide a prediction model to predict these classes by the measured quantities
+
+## Loading and Exploring Data
+
+
+A brief survey of the data shows many empty values and some values "#DIV/0!" which apparently are not useful for predictions. We prevent loading them.
+
+```{r}
+training <- read.csv("../../pml-training.csv", na.strings=c("NA","#DIV/0!",""))
+testing <- read.csv("../../pml-testing.csv", na.strings=c("NA","#DIV/0!",""))
+
 ```
 
-## R Markdown
+The summary of classes show enough observations for each of the classes to make predicitions meaningful.
+There are 160 variables in the data set, meaning that there are 159 possible predictors for the variable "classe"
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+```{r}
+summary(training$classe)
+dim(training)
 
-```{r cars}
-summary(cars)
 ```
 
-## Including Plots
 
-You can also embed plots, for example:
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+
+## Cleaning Data
+
+We are removing predictors that aren't useful for our tasks. We collect all of them in different logical vectors to remove the concerned columns from the training set in one step.
+
+### Removing near zero values
+Using the caret packages nearZeroVar function we determine variables ithout predictive value.
+
+```{r warning=FALSE}
+library(caret)
+nsv <- nearZeroVar(training,saveMetrics=TRUE)
+subset_vector1 <- !nsv$nzv
+
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+### Removing special columns: IDs, timestamps etc.
+```{r}
+subset_vector2 <- rep(TRUE, ncol(training))
+subset_vector2[1:5] <- FALSE
+
+```
+
+
+
+### Removing columns with mostly NAs
+
+The distribution of NAs in the data set shows that there are two groups of variables, one group has mostly not NAs, the other group has NAs more than 90% of the time
+
+
+```{r}
+na_percentage <- apply(training, 2, function(x) { 100*sum(is.na(x))/nrow(training)})
+hist(na_percentage)
+subset_vector3 <- na_percentage < 90
+```
+
+
+### Removing irrelevant variables from the data sets
+After cleaning the data there are 53 predictors left to build the models. 
+
+```{r}
+
+subset_vector <- subset_vector1 & subset_vector2 & subset_vector3
+training <- training[,subset_vector]
+testing <- testing[,subset_vector]
+
+dim(training)
+
+```
+
+## Setting up the data for model creation
+
+Since it should be possible to predict an out-of-sample error it is necessary to divide the training set further into a training part used for model creation an another part to test the model.
+
+```{r}
+
+inTrain <- createDataPartition(y=training$classe,p=0.75, list=FALSE)
+train <- training[inTrain,]
+test <- training[-inTrain,]
+
+```
+
+
+## Model creation and evaluation
+
+For the models we use 10-fold cross validation to reduce overfitting. Since we use the caret train methods to buid models this replaces the default bootstrap resampling.
+
+```{r}
+
+tc=trainControl(method="cv", number=10)
+
+```
+
+
+
+### Decision Tree
+First we use the caret train method to create a decision tree. 
+
+```{r}
+
+moddec <- train(classe ~ ., data=train, method="rpart", trControl=tc)
+moddec
+
+```
+
+The model shows an accuracy of just above 50% on the sample data, we discard this model and don't use it any further.
+
+
+
+### Random Forest
+The default configuration of caret using rf is the creation of 500 trees. Given the size of the data set and the number of predictors we create only 10 trees (parameter ntree), to be able to create a model in a reasonable time given the used hardware.
+
+```{r}
+
+modrf <- train(classe ~ ., data=train, method="rf", trControl=tc, ntree=10)
+modrf
+
+```
+
+Surprisingly, this algorithm works quite well with an accuracy of above 99%.
+we proceed to estimate an out-of-sample error using the test set.
+
+
+```{r}
+
+pred <- predict(modrf, newdata = test)
+confusionMatrix(pred, test$classe)
+accuracy <- confusionMatrix(pred, test$classe)$overall[1]
+out_of_sample_error <- 1 - accuracy
+
+```
+
+Using the test set we also see an accuracy of **`r accuracy`** and an estimated out of sample error of 
+**`r out_of_sample_error`**.
+
+
+
+
+
+## Prediction on the given testing set
+
+We use the created Random Forest model to make predictions on the given testing set https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv.
+
+```{r}
+
+pred_testing <- predict(modrf, newdata = testing)
+pred_testing
+
+```
+
+
+
+
